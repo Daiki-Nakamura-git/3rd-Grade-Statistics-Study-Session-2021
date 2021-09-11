@@ -2,8 +2,200 @@
 title: "My Website"
 ---
 
-Hello, Website!
 
-For more information about simple R Markdown websites, please read the documentation at https://bookdown.org/yihui/rmarkdown/rmarkdown-site.html.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+# はじめに
+このドキュメントでは、3年統計勉強会2021の最終課題の模範解答を示す。この最終課題は、一連の分析手続きを復習することを意図している。  
+分析には、`R 4.1.1`と追加のパッケージを使用した。使用データは[GDrive](https://drive.google.com/drive/folders/1X9o1HJO3BEtgYdA4EWrRuIJlAQqDdHFw?usp=sharing)上に公開している。
 
-Please also note that simple R Markdown sites are _not_ based on **blogdown**. They are probably good for websites with only a few Rmd documents. For larger-scale and more sophisticated websites (such as blogs), you may want to use **blogdown** instead: https://github.com/rstudio/blogdown.
+-----
+
+# データの読み込み
+ここでは、課題用のデータである`data2.xlsx`を読み込み、`dat1`に格納する。  
+```{r}
+library(readxl)
+setwd("H:/OneDrive/ドキュメント/研究系/勉強会/統計勉強会@2020.11-12/practice2020")
+dat1 = read_excel("data2.xlsx")
+library(DT)
+datatable(dat1)
+```
+今回用意したデータセットは、2つの小学校（aoba, minami）の第5・6学年（250名）を対象とした、算数のテスト（100点満点、3回）、理科のテスト（100点満点、3回）、メタ認知の質問紙（7件法、7項目）のデータから構成されている。欠損値はあらかじめ取り除いてあるため、このまま分析を始める。
+
+-----
+
+# 基礎集計
+データを分析する上では、いきなり推測統計を行うのではなく、まずは基礎的な統計量やその分布を確認することが重要である。はじめに、いくつかの統計量について確認してみよう。データの傾向を表す代表的な統計量としては、平均値と標準偏差があった。それぞれ以下の計算式で算出することができる（復習）。
+$$
+\overline{x} = \frac{x_1 + x_2 + \cdots + x_n}{n}
+\\
+\sigma = \sqrt{\frac{1}{n}\sum_{i = 1}^n {(x_i - \overline{x})^2}}
+$$
+また、Rでは`psych`パッケージの`describe`関数を使用すると同時に出力できる。
+```{r}
+library(psych)
+describe(dat1[,7:19]) #基礎集計
+```
+出力結果を見ると、例えば算数1回目のテストは、平均`r round(mean(dat1$sansu1), 2)`、標準偏差`r round(sd(dat1$sansu1), 2)`、最高得点均`r round(max(dat1$sansu1), 2)`、最低得点均`r round(min(dat1$sansu1), 2)`であったことが読み取れる。質問紙の回答データも１～７の範囲に収まっているため、入力ミスも無さそうだ。それでは、各課題の検討に移ろう。
+
+-----
+# ５つの課題
+## Q1.各教科の平均得点の変数を作成せよ
+1つ目の課題では、各教科の平均得点の変数を作成することが求められている。つまり、算数と理科のそれぞれについて3回分を平均した得点の変数を作成する必要がある。ここでは、`apply`関数を使って、3回分のテスト平均を行ごと（MARGIN=1）に求めた変数を作成する。`str`関数の出力結果を見ると、新しい変数が作成できていることが確認できる。
+```{r}
+dat1$sansu_all = apply(dat1[,7:9], MARGIN = 1, mean)  #算数平均の作成
+dat1$rika_all = apply(dat1[,10:12], MARGIN = 1, mean)  #理科平均の作成
+str(dat1)
+```
+
+## Q2.学年間で、理科の平均得点に差があるかを検討せよ
+2つ目の課題では、1つ目の課題で統合した理科の平均得点について、学年間で差があるかを検討することが求められている。まずは、当該変数の学年ごとの基礎統計量と分布を確認してみよう。`psych`パッケージの`describeBy`関数を使用して、学年ごとの理科得点を確認してみよう。また、`boxplot`関数を使用して、学年ごとの理科得点の分布を確認してみよう。
+
+```{r}
+describeBy(dat1$rika_all, group = dat1$grade)
+boxplot(rika_all~grade, data = dat1, horizontal = T)  #学年ごとの箱ひげ図
+```
+
+出力を見ると、第6学年の方が5点ほど平均点が高いことが見て取れる。ただし、標準偏差も第6学年の方が大きい。箱ひげ図を見ると、第6学年の方が得点が広く分布していることが視覚的にも理解できる。  
+それでは、統計的に見て学年間で平均値に差があると主張できるだろうか？ここでは独立した２群の平均値差を比較するため、Welchのｔ検定を行う。帰無仮説は、「学年間で平均値に差はない（差＝０）」である。
+```{r}
+g5 = dat1$rika_all[dat1$grade == "5"] #5年の抽出
+g6 = dat1$rika_all[dat1$grade == "6"] #6年の抽出
+t.test(g6, g5, var.equal=F) #F=Welchのt検定
+```
+*t* 検定の結果を見ると、*p* 値は非常に小さく、1%水準で有意であることが分かる。よって、帰無仮説を棄却し、学年間で平均値に差があると判断する。  
+しかし、これは平均値に差があるかを検討するものであって、差の大きさを意味するものではない。そこで、次に、差の大きさを表す指標である効果量を算出してみよう。
+```{r}
+library(effsize)
+cohen.d(g6, g5, hedges.correction = T)  #効果量 hedgesのg
+```
+効果量は、*g* = 0.764 (95%CI[0.507, 1.021]) であり、中程度の大きさである。これは、標準偏差0.764個分の差があることを意味している。やはり、6年生の方が学習内容が定着しているせいか、平均点が高いようだ。
+
+## Q3.男女間で、算数の平均得点に差があるかを検討せよ
+3つ目の課題では、1つ目の課題で統合した算数の平均得点について、性別間で差があるかを検討することが求められている。まずは、当該変数の性別ごとの基礎統計量と分布を確認してみよう。`psych`パッケージの`describeBy`関数を使用して、性別ごとの理科得点を確認してみよう。また、`lattice`パッケージの`histogram`関数を使用して、学年ごとの理科得点の分布を確認してみよう。
+
+```{r}
+describeBy(dat1$sansu_all, group = dat1$sex)
+library(lattice)
+histogram(~rika_all|sex, data = dat1, layout=c(1,2)) #性別で分けたヒストグラム
+```
+
+出力を見ると、女子の方が4点ほど平均点が高いことが見て取れる。ただし、ヒストグラムを見ても、視覚的に差を見出すことは難しそうだ。  
+では、統計的に見て性別間で平均値に差があると主張できるだろうか？ここでは独立した２群の平均値差を比較するため、Welchのｔ検定を行う。帰無仮説は、「性別間で平均値に差はない（差＝０）」である。
+```{r}
+m = dat1$rika_all[dat1$sex == "m"] #第1群の指定
+f = dat1$rika_all[dat1$sex == "f"] #第2群の指定
+t.test(m, f, var.equal=F) #Welchのt検定
+```
+*t* 検定の結果を見ると、*p* 値は0.05よりも大きく、有意ではないことが分かる。よって、帰無仮説は棄却できず、性別間で平均値に差があるとは判断できない。  
+しかし、これは平均値に差があるかを検討するものであって、差の大きさを意味するものではない。そこで、次に、差の大きさを表す指標である効果量を算出してみよう。
+```{r}
+library(effsize)
+cohen.d(m, f, hedges.correction = T)  #効果量 hedgesのg
+```
+効果量は、*g* = 0.007 (95%CI[-0.242, 0.253]) であり、極めて小さい。どうやら、算数のテストに性差は見られないようだ。
+
+## Q4.メタ認知尺度の因子構造について検討せよ
+4つ目の課題では、質問紙のデータを基に、メタ認知尺度の因子構造を検討することが求められている。メタ認知に関する先行研究を調べると、研究間で提案されている因子構造はやや異なるものの、2因子として解釈する研究が多いことが分かる（[Craig et al., 2020](https://doi.org/10.1007/s11409-020-09222-y)）。そこで、2因子を最有力候補としつつも、得られたデータに基づき因子数を検討しながら、探索的因子分析を行っていくことにする。  
+はじめに、3つの方法で因子数の予備的な検討を行う。3つの方法とは順に、平行分析、ガットマン基準、スクリーテストである。  
+
+### 平行分析
+平行分析とは、データに含まれている誤差を推定し、誤差よりも大きな情報を持った因子数を抽出する方法である。平行分析では、まず、データと同じサンプルサイズの乱数を大量に発生させ、その乱数同士の相関行列の固有値を算出し、プロットする（点線部分）。次に、実データの固有値の推移をプロットし（実線部分）、2つの線の交差点以上の因子数を採用する。
+```{r}
+dat_MC = dat1[,c(13:19)] #13～19行目の取り出し
+fa.parallel(dat_MC) #平行分析
+```
+平行分析の結果に基づくと、因子数２と３の間に点線部分があることから、因子数として２因子が提案されたと解釈できる。
+
+### ガットマン基準とスクリーテスト
+ガットマン基準とは、固有値が1以上の因子を採用する方法である。また、スクリーテストとは、固有値の大きさをプロットし（スクリープロット）、推移がなだらかになる直前までを因子として抽出する方法である。
+```{r}
+cor = cor(dat_MC)　#項目間の相関
+(eigen = eigen(cor)$values) #固有値
+plot(eigen, type="b", main="Scree Plot", xlab="Number", ylab="Eigenvalue")
+```
+
+固有値の減衰状況を見ると、第3因子で1を下回るため、第２因子までを採用するべきだと判断できる。また、スクリープロットを見ると、第3因子から推移がなだらかになっているため、第2因子までを採用するべきだと判断できる。
+
+### 探索的因子分析
+では、2因子構造を候補として、探索的因子分析を行おう。
+```{r}
+efa1 = factanal(x=dat_MC, factors=2, fm="ml", rotation="none") #最尤法 回転なし（初期解）
+print(efa1, cutoff=0.35)  #因子負荷量0.35以下を非表示
+efa2 = factanal(x=dat_MC, factors=2, fm="ml", rotation="promax") #最尤法 promax回転
+print(efa2, cutoff=0.35)  #因子負荷量0.35以下を非表示
+```
+初期解（fit1）においては、回転を行っていないため、MC1~3が上手く識別できていない。そこで、回転を加えると(fit2)、2つの因子にきれいに分かれていることが分かる。MC4の項目の因子負荷量がやや低いものの、0.4を越えているため許容範囲内である。また、因子間相関は、0.379であることが分かる。  
+
+### 信頼性分析
+次に、各因子の信頼性係数を確認してみる。
+```{r}
+alpha(dat_MC[,1:3])$total  #F1 α係数
+alpha(dat_MC[,4:7])$total  #F2 α係数
+library(GPArotation)
+omega(nfactors = 1, dat_MC[,1:3])$omega.tot  #F1 ω係数
+omega(nfactors = 1, dat_MC[,4:7])$omega.tot  #F2 ω係数
+```
+どちらの指標も0.8を越えているので良好である。これは、項目間で回答傾向が一貫していることを意味している。
+
+## Q5.仮説モデルを立て、構造方程式モデリングを用いた分析を実行せよ
+5つ目の課題では、これまでの知見を参考に仮説モデルを立て、データへの適合を確認する。先行研究より、メタ認知は学習成績に正の影響を及ぼすことが指摘されている（e.g., Ohtani & Hisasaka, 2018）。また、理科の学習においては、算数の知識が必要になる場面があることから、算数から理科への正の影響が想定できる。
+
+### モデル１
+モデル１として、メタ認知が理科得点に正の影響を与えているというモデルを考えてみる。
+```{r}
+library(lavaan)
+model1="
+F1 =~ MC1 + MC2 + MC3
+F2 =~ MC4 + MC5 + MC6 + MC7
+rika_all ~ F1 + F2
+MC1 ~~ MC2
+"
+fit1 = sem(model = model1, data = dat1)
+summary(fit1, standardized=T, fit.measures=T, ci=T, rsquare=T)
+library(semPlot)
+semPaths(fit1, "std", rotation = 2, edge.label.cex = 1.2, style="lisrel",
+         fade=F,theme='gray',sizeMan = 8)
+```
+
+適合度を見ると、CFIとTLIは0.9を越えており、RMSEAも許容できる値になっている。2つの因子からのパス係数はどちらも有意である。決定係数（説明率）を見ると、このモデルで理科得点の変動の39.3%を説明できている。  
+
+### モデル２
+さらにモデルを改善できるか試してみよう。モデル1では、3回の理科テストの平均得点を観測変数として使用したが、今度は、3回のテスト得点の背後に理科学力という潜在変数（因子）があるという仮定でモデル2を組んでみよう。
+```{r}
+model2="
+F1 =~ MC1 + MC2 + MC3
+F2 =~ MC4 + MC5 + MC6 + MC7
+Rika =~ rika1 + rika2 + rika3
+Rika ~ F1 + F2
+MC1 ~~ MC2
+"
+fit2 = sem(model = model2, data = dat1)
+summary(fit2, standardized=T, fit.measures=T, ci=T, rsquare=T)
+semPaths(fit2, "std", rotation = 2, edge.label.cex = 1.2, style="lisrel",
+         fade=F,theme='gray',sizeMan = 8)
+```  
+
+潜在変数を導入したことで、適合度が向上し、メタ認知から理科学力への回帰係数が大きくなったことに注目して欲しい（i.e., 相関の希薄化の改善）。2つの因子からのパス係数はどちらも有意である。また、理科学力の決定係数は、63.6%と非常に高い。  
+
+### モデル３
+次に、モデル２と同様の方法で算数学力という潜在変数を追加してモデル3を組んでみよう。
+```{r}
+model3="
+F1 =~ MC1 + MC2 + MC3
+F2 =~ MC4 + MC5 + MC6 + MC7
+Sansu =~ sansu1 + sansu2 + sansu3
+Rika =~ rika1 + rika2 + rika3
+Sansu ~ F1 + F2
+Rika ~ F1 + F2 + Sansu
+MC1 ~~ MC2
+Rika ~~ a*Rika
+a > 0
+"
+fit3 = sem(model = model3, data = dat1)
+summary(fit3, standardized=T, fit.measures=T, ci=T, rsquare=T)
+```
+出力結果を見ると、モデル適合度がさらに向上したことが分かるだろう。また、算数よりも理科の方がメタ認知の影響が強いことが読み取れる。  
+この模範解答では、このモデル3を最終的なモデルとして採択する。その他にも様々なモデルが考えられるはずなのでぜひ試してみて欲しい。
